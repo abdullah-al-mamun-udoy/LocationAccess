@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,7 +21,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,16 +32,104 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
-import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.delay
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private fun isLocationPermissionGranted(
+        context: Context,
+        coroutineScope: CoroutineScope,
+        requestPermissionLauncher: ActivityResultLauncher<Array<String>>,
+        locationViewModel: LocationListViewModel
+    ): Boolean {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        var currentLocation: Location? = null
+
+        return if (
+            ActivityCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            // Request permissions if not granted
+            coroutineScope.launch {
+                requestPermissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION
+                    )
+                )
+            }
+            false
+        } else {
+            // Permissions are already granted, proceed with getting location
+            val gpsLocation = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val networkLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+
+            Log.d("permission", "gpsLocation: $gpsLocation")
+            Log.d("permission", "networkLocation: $networkLocation")
+
+            currentLocation = when {
+                gpsLocation != null && networkLocation != null -> {
+                    if (gpsLocation.accuracy > networkLocation.accuracy) gpsLocation else networkLocation
+                }
+                gpsLocation != null -> gpsLocation
+                else -> networkLocation
+            }
+            currentLocation?.let {
+                locationViewModel._locationList.clear()
+                locationViewModel.addLocationList(it)
+                Log.d("permission", "viewModel size ${locationViewModel.locationList.size}")
+            }
+            true
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        lateinit var requestPermissionLauncher: ActivityResultLauncher<Array<String>>
+        var bool = mutableStateOf(false)
+        var locationViewModel: LocationListViewModel =
+            ViewModelProvider(this).get(LocationListViewModel::class.java)
+
+
+        requestPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+            val permissionGranted = permissions.all { it.value }
+            if (permissionGranted) {
+                Toast.makeText(this, "Location permissions granted", Toast.LENGTH_SHORT).show()
+                isLocationPermissionGranted(
+                    this,
+                    lifecycleScope,
+                    requestPermissionLauncher,
+                    locationViewModel
+                )
+            } else {
+                Toast.makeText(this, "Location permissions denied", Toast.LENGTH_SHORT).show()
+            }
+        }
+        if (isLocationPermissionGranted(
+                this,
+                lifecycleScope,
+                requestPermissionLauncher,
+                locationViewModel
+            )
+        ) {
+            bool.value = true
+        } else {
+            bool.value = false
+        }
         setContent {
             MyApplicationTheme {
-                MyApp()
+                MyApp(bool,locationViewModel)
             }
         }
     }
@@ -55,12 +143,11 @@ private fun isLocationPermissionGranted(): Boolean {
     val scope = rememberCoroutineScope()
 
     val locationManager = getLocationManager(context)
-    var locationByNetwork by remember { mutableStateOf<Location?>(null) }
     var currentLocation by remember {
         mutableStateOf<Location?>(null)
     }
     val locationViewModel = LocationListViewModel()
-    var isPermissionGranted = remember { mutableStateOf(false) }
+
 
     // Request permissions launcher
     val requestPermissionLauncher = rememberLauncherForActivityResult(
@@ -69,73 +156,39 @@ private fun isLocationPermissionGranted(): Boolean {
         val permissionGranted = permissions.all { it.value }
         if (permissionGranted) {
 
-
-            Log.d("tag1", "isPermissionGranted2 $isPermissionGranted")
+            Log.d("permission", "isPermissionGranted ${permissionGranted}")
 
             var gpsLocation = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            // Get the last known location from network provider
             var networkLocation =
                 locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
 
-            Log.d("tag", "gpsLocation $gpsLocation")
-            Log.d("tag", "networkLocation $networkLocation")
+            Log.d("permission", " gpsLocation $gpsLocation")
+            Log.d("permission", " networkLocation $networkLocation")
 
 
-
-            while (true) {
-                Log.d("tag", "before delay")
-//                delay(5000) // Wait for 5 seconds
-                Log.d("tag", "after delay")
-
-                // Ensure location permissions are granted
-
-                val lastKnownLocationByGps =
-                    locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                lastKnownLocationByGps?.let {
-                    gpsLocation = lastKnownLocationByGps
+            if (gpsLocation != null) {
+                if (networkLocation != null) {
+                    currentLocation =
+                        if (gpsLocation.accuracy > networkLocation.accuracy) gpsLocation else networkLocation
+                } else {
+                    currentLocation = gpsLocation
                 }
-
-                val lastKnownLocationByNetwork =
-                    locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-                lastKnownLocationByNetwork?.let {
-                    networkLocation = lastKnownLocationByNetwork
-                }
-
-                Log.d("tag", "locationByGps $gpsLocation")
-                Log.d("tag", "locationByNetwork $networkLocation")
-
-                // Determine which location is more accurate
-                gpsLocation?.let { gpsLocation ->
-                    networkLocation?.let { networkLocation ->
-                        currentLocation =
-                            if (gpsLocation.accuracy > networkLocation.accuracy) gpsLocation else networkLocation
-                    } ?: run {
-                        currentLocation = gpsLocation
-                    }
-                } ?: run {
-                    locationByNetwork?.let { networkLocation ->
-                        currentLocation = networkLocation
-                    }
-                }
-
-                // Add the current location to the list
-                currentLocation?.let {
-//                    locationList = (locationList + it).toMutableList() // Update list safely
-                    locationViewModel.addLocationList(it)
-                }
-
-
+            } else {
+                currentLocation = networkLocation
             }
-
-            Log.d("tag", "isLocationPermissionGranted ${permissionGranted}")
+            currentLocation?.let {
+                locationViewModel.addLocationList(it)
+                Log.d("permission", "viewModel size in network ${locationViewModel._locationList.size}")
+            }
+            Toast.makeText(context, "Location permissions granted", Toast.LENGTH_SHORT).show()
 
         } else {
-            "Location permissions denied"
-            Log.d("tag", "isLocationPermissionGranted 1${permissionGranted}")
+            Log.d("permission", "isLocationPermissionGranted ${permissionGranted}")
+            Toast.makeText(context, "Location permissions Denied", Toast.LENGTH_SHORT).show()
 
         }
-        // Show toast message
-        Toast.makeText(context, "Location permissions granted", Toast.LENGTH_SHORT).show()
+
+
     }
 
     return if (
@@ -167,142 +220,41 @@ fun getLocationManager(context: Context): LocationManager {
     return context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 }
 
-// Usage
-
 @SuppressLint("MutableCollectionMutableState", "MissingPermission")
 @Composable
-fun MyApp() {
-    val context = LocalContext.current
-
-    val locationManager = getLocationManager(context)
-    var locationByNetwork by remember { mutableStateOf<Location?>(null) }
-    var currentLocation by remember {
-        mutableStateOf<Location?>(null)
-    }
-    val locationViewModel = LocationListViewModel()
-    var isPermissionGranted = remember { mutableStateOf(false) }
-
-    Log.d("Udoy", "isPermissionGranted $isPermissionGranted")
-    isPermissionGranted.value = isLocationPermissionGranted()
-
-
-
-    Log.d("Udoy", "isPermissionGranted $isPermissionGranted")
-
-    // Get the last known location from GPS provider
-
-//    LaunchedEffect(key1 = Unit) {
-
-    if (isLocationPermissionGranted()) {
-        Log.d("tag1", "isPermissionGranted2 $isPermissionGranted")
-
-        var gpsLocation = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-        // Get the last known location from network provider
-        var networkLocation =
-            locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-
-        Log.d("tag", "gpsLocation $gpsLocation")
-        Log.d("tag", "networkLocation $networkLocation")
-
-
-//        while (true) {
-        Log.d("tag", "before delay")
-//                delay(5000) // Wait for 5 seconds
-        Log.d("tag", "after delay")
-
-        // Ensure location permissions are granted
-
-        val lastKnownLocationByGps =
-            locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-        lastKnownLocationByGps?.let {
-            gpsLocation = lastKnownLocationByGps
-        }
-
-        val lastKnownLocationByNetwork =
-            locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-        lastKnownLocationByNetwork?.let {
-            networkLocation = lastKnownLocationByNetwork
-        }
-
-
-        // Determine which location is more accurate
-
-        if(gpsLocation!=null){
-            if(networkLocation!=null){
-                currentLocation = if (gpsLocation!!.accuracy > networkLocation!!.accuracy) gpsLocation else networkLocation
-            }
-            else{
-                currentLocation = gpsLocation
-            }
-        }
-        else{
-            currentLocation = networkLocation
-        }
-//        gpsLocation?.let { gpsLocation ->
-//            networkLocation?.let { networkLocation ->
-//                currentLocation =
-//                    if (gpsLocation.accuracy > networkLocation.accuracy) gpsLocation else networkLocation
-//            } ?: run {
-//                currentLocation = gpsLocation
-//            }
-//        } ?: run {
-//            locationByNetwork?.let { networkLocation ->
-//                currentLocation = networkLocation
-//                locationViewModel.addLocationList(currentLocation!!)
-//                Log.d("tag", "inside run block ${locationViewModel.locationList.size}")
-//            }
-//        }
-
-        Log.d("tag", "gps location $gpsLocation")
-        Log.d("tag", "network location $networkLocation")
-
-        // Add the current location to the list
-        currentLocation?.let {
-            Log.d("tag", "currentLocation $currentLocation")
-//                    locationList = (locationList + it).toMutableList() // Update list safely
-            locationViewModel.addLocationList(it)
-        }
-//        }
-
-    }
-//    }
-    Screen(viewModel = locationViewModel)
-
-
+fun MyApp(bool: MutableState<Boolean>, locationViewModel: LocationListViewModel) {
+   if(bool.value){
+       Screen(viewModel = locationViewModel)
+   }
 }
 
 @Composable
 fun Screen(viewModel: LocationListViewModel) {
-    Text(text = "hello")
-    if (viewModel.locationList.isNotEmpty()) {
 
-        Surface(modifier = Modifier.fillMaxSize()) {
-            // Display the list of latitude and longitude values
-            Column {
-                if (viewModel.locationList.isEmpty()) {
-                    Text(text = "No location found")
-                } else {
-                    viewModel.locationList.forEach { location ->
-                        Text(
-                            text = "Latitude: ${location.latitude ?: 30.33}",
-                            modifier = Modifier.padding(8.dp),
-                            color = Color.Red
-                        )
-                        Text(
-                            text = "Longitude: ${location.longitude ?: -97.74}",
-                            modifier = Modifier.padding(8.dp),
-                            color = Color.Red
-                        )
-                    }
+
+    Surface(modifier = Modifier.fillMaxSize()) {
+        // Display the list of latitude and longitude values
+        Column {
+            if (viewModel.locationList.isEmpty()) {
+                Text(text = "No location found")
+            } else {
+                viewModel.locationList.forEach { location ->
+                    Text(
+                        text = "Latitude: ${location.latitude}",
+                        modifier = Modifier.padding(8.dp),
+                        color = Color.Red
+                    )
+                    Text(
+                        text = "Longitude: ${location.longitude}",
+                        modifier = Modifier.padding(8.dp),
+                        color = Color.Red
+                    )
                 }
             }
         }
     }
 
-
 }
-
-
 @Composable
 fun MyApplicationTheme(content: @Composable () -> Unit) {
     MaterialTheme(content = content)

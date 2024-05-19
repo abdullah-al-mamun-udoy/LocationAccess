@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 class LocationListViewModel :ViewModel() {
 
-    val _locationList = mutableListOf<Location>()
+    val _locationList: MutableList<Location> = mutableListOf()
     val locationList = _locationList
 
     fun addLocationList(location: Location) {
