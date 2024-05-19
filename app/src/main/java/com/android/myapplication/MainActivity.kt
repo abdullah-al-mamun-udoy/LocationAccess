@@ -35,6 +35,8 @@ import androidx.core.app.ActivityCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -69,24 +71,31 @@ class MainActivity : ComponentActivity() {
             false
         } else {
             // Permissions are already granted, proceed with getting location
-            val gpsLocation = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            val networkLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            coroutineScope.launch {
+                while (isActive){
+                    val gpsLocation = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                    val networkLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
 
-            Log.d("permission", "gpsLocation: $gpsLocation")
-            Log.d("permission", "networkLocation: $networkLocation")
+                    Log.d("permission", "gpsLocation: $gpsLocation")
+                    Log.d("permission", "networkLocation: $networkLocation")
 
-            currentLocation = when {
-                gpsLocation != null && networkLocation != null -> {
-                    if (gpsLocation.accuracy > networkLocation.accuracy) gpsLocation else networkLocation
+                    currentLocation = when {
+                        gpsLocation != null && networkLocation != null -> {
+                            if (gpsLocation.accuracy > networkLocation.accuracy) gpsLocation else networkLocation
+                        }
+                        gpsLocation != null -> gpsLocation
+                        else -> networkLocation
+                    }
+                    currentLocation?.let {
+                        locationViewModel._locationList.clear()
+                        locationViewModel.addLocationList(it)
+                        Log.d("permission", "viewModel size ${locationViewModel.locationList.size}")
+                    }
+                    delay(5000)
+                    Log.d("permission", "delay completed")
                 }
-                gpsLocation != null -> gpsLocation
-                else -> networkLocation
             }
-            currentLocation?.let {
-                locationViewModel._locationList.clear()
-                locationViewModel.addLocationList(it)
-                Log.d("permission", "viewModel size ${locationViewModel.locationList.size}")
-            }
+
             true
         }
     }
