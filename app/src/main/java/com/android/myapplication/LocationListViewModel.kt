@@ -2,13 +2,14 @@ package com.android.myapplication
 
 import android.location.Location
 import android.util.Log
+import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class LocationListViewModel :ViewModel() {
 
-    val _locationList: MutableList<Location> = mutableListOf()
-    val locationList = _locationList
+    private val _locationList = mutableStateListOf<Location>()
+    val locationList: List<Location> get() = _locationList
 
     fun addLocationList(location: Location) {
         _locationList.add(location)
